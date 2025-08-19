@@ -1,0 +1,76 @@
+# CI configuration for the Python application and deploying to Cloud Run
+name: Python application
+
+on:
+  push:
+    branches: [ "main" ] #The workflow will run whenever you push commits to the main branch.
+  pull_request:
+    branches: [ "main" ] #The workflow will run whenever a pull request is opened, synchronized, or reopened targeting the main branch.
+
+permissions:
+  contents: read #allows the workflow to read repository content (such as code and files).
+
+jobs:
+  build:
+    runs-on: ubuntu-latest #The job will run on the latest version of Ubuntu runner provided by github
+
+    steps:
+    - uses: actions/checkout@v4 #This step checks out your repository’s code into the GitHub Actions runner
+
+    - name : print
+      run: echo "${{ secrets.GCP_PROJECT_ID}}"
+
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.GCP_SA_KEY }} #This step uses the official Google authentication action to log in to Google Cloud using a service account key stored in your GitHub secrets
+    
+    - name: Set up Cloud SDK #This step installs and configures the Google Cloud SDK in your GitHub Actions runner.
+      uses: google-github-actions/setup-gcloud@v2
+      with:
+        #version: 'latest'
+        #service_account_key: ${{ secrets.GCP_SA_KEY }} #This line is commented out because the credentials are already provided in the authentication step above
+        project_id: ${{ secrets.GCP_PROJECT_ID }}
+        #export_default_credentials: true
+
+    - name: Verify authentication
+      run: |
+        gcloud auth list
+        gcloud config list
+
+    - name: Authorize Docker for Artifact Registry #This step configures Docker on the GitHub Actions runner to authenticate with Google Artifact Registry in the us-central1 region
+      run: |
+        gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+    
+    - name: Build and Push with Cloud Build
+      run: |
+        gcloud builds submit --tag us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/jumperdevops/devops-ci-pipeline-image:$GITHUB_SHA . --gcs-log-dir gs://jumperdevnew_cloudbuild/
+
+    - name: Deploy to Cloud Run
+      run: |
+        gcloud run deploy jumper-devops-test \
+          --image=us-central1-docker.pkg.dev/jumperdevnew/jumperdevops/devops-ci-pipeline-image \
+         --region=us-central1 \
+         --project=jumperdevnew \
+         --platform=managed \
+          --allow-unauthenticated
+    
+    # - name: Get GKE credentials
+    #   run: |
+    #     gcloud container clusters get-credentials ${{ secrets.GKE_CLUSTER_NAME }} --region ${{ secrets.GKE_REGION }} --project ${{ secrets.GCP_PROJECT_ID }}
+
+    # - name: Set image in deployment YAML
+    #   run: |
+    #     sed -i "s|IMAGE_PLACEHOLDER|us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/jumperdevops/devops-ci-pipeline-image:$GITHUB_SHA|g" k8s/deployment.yaml
+
+    # - name: Install gke-gcloud-auth-plugin
+    #   run: |
+    #     gcloud components install gke-gcloud-auth-plugin --quiet
+
+    # - name: Deploy to GKE
+    #   run: |
+    #     kubectl apply -f k8s/deployment.yaml
+    #     # Optionally apply service.yaml
+    #     kubectl apply -f k8s/service.yaml
+
+
